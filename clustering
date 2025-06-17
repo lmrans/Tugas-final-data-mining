@@ -1,0 +1,140 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import silhouette_score
+
+df = pd.read_csv('C:/laporan data mining/state_crime.csv')  # Ganti path sesuai lokasi file
+
+print("5 Data Teratas dari Dataset:")
+print(df.head())
+
+print("struktur data :")
+print(df.info())
+
+# Filter tahun 2012, hapus duplikat, dan reset indeks
+if 'Year' in df.columns:
+    df = df[df['Year'] == 2012]
+    df = df.drop_duplicates(subset=['State'])  # Pastikan hanya 51 entri
+    df = df.reset_index(drop=True)
+    print(f"Jumlah baris setelah filtering tahun 2012: {len(df)}")
+
+print("cek missing value :")
+print(df.isnull().sum())
+
+# Simpan nama state
+if 'State' in df.columns:
+    states = df['State']
+    df = df.drop(columns='State')
+else:
+    states = None
+# =====================================================
+# 2. PREPROCESSING: PILIH 10 ATRIBUT, Missing value dan Standarisasi
+# =====================================================
+df_numeric = df.select_dtypes(include=[np.number]).iloc[:, :10]
+
+print("\n 10 Atribut yang Terpilih dari Dataset:")
+print(df_numeric.columns.tolist())
+
+print("\n Jumlah NaN per kolom sebelum pengisian:")
+print(df_numeric.isna().sum())
+df_numeric = df_numeric.fillna(df_numeric.mean(numeric_only=True))
+print("\n Jumlah NaN per kolom setelah pengisian:")
+print(df_numeric.isna().sum())
+
+data_scaled = df_numeric.copy()
+for column in df_numeric.columns:
+    mean_val = df_numeric[column].mean()
+    std_val = df_numeric[column].std()
+    if std_val == 0:
+        print(f"Peringatan: Standar deviasi nol untuk kolom {column}, mengganti dengan 1.")
+        std_val = 1
+    data_scaled[column] = (df_numeric[column] - mean_val) / std_val
+X = data_scaled.values
+
+# =====================================================
+# 3. K-MEANS MANUAL
+# =====================================================
+def euclidean(a, b):
+    return np.sqrt(np.sum((a - b) ** 2))
+
+def compute_distances(X, centroids):
+    return np.array([[euclidean(x, c) for c in centroids] for x in X])
+
+def kmeans_manual(X, k, max_iter=100, tol=1e-4):
+    np.random.seed(42)
+    centroids = X[np.random.choice(len(X), k, replace=False)]
+    print(f"\n Centroid Awal untuk k={k}:")
+    for i, centroid in enumerate(centroids):
+        print(f"Centroid {i}: {centroid}")
+    
+    for i in range(max_iter):
+        distances = compute_distances(X, centroids)
+        labels = np.argmin(distances, axis=1)
+        new_centroids = np.array([X[labels == j].mean(axis=0) for j in range(k)])
+        if np.all(np.abs(new_centroids - centroids) < tol):
+            print(f" Konvergen di iterasi ke-{i+1}")
+            break
+        centroids = new_centroids
+
+    return labels, centroids
+
+# Jalankan clustering
+k = 2
+labels, centroids = kmeans_manual(X, k)
+
+# =====================================================
+# 4. HASIL CLUSTERING & EVALUASI
+# =====================================================
+result = pd.DataFrame(X, columns=df_numeric.columns)
+result['Cluster'] = labels
+if states is not None:
+    result['State'] = states.values
+    result = result[['State', 'Cluster'] + df_numeric.columns.tolist()]
+
+print("\n Hasil Cluster:")
+print(result[['State', 'Cluster']])
+
+print("\n Jumlah anggota tiap cluster:")
+print(result['Cluster'].value_counts())
+
+# Menampilkan daftar negara bagian per klaster
+print("\n Jumlah dan Daftar Negara Bagian per Cluster:")
+cluster_counts = result.groupby('Cluster')['State'].apply(list)
+
+for cluster_id, states_in_cluster in cluster_counts.items():
+    print(f"\n Cluster {cluster_id} - Jumlah: {len(states_in_cluster)} negara bagian")
+    for state in states_in_cluster:
+        print(f"   - {state}")
+
+# Evaluasi Clustering (Silhouette Score)
+if not np.any(np.isnan(X)) and len(np.unique(labels)) > 1:
+    sil_score = silhouette_score(X, labels)
+    print(f"\n Silhouette Score (SI): {sil_score:.4f}")
+else:
+    print(" Tidak dapat menghitung Silhouette Score: Data mengandung NaN atau label tidak cukup beragam.")
+
+print(f"\n Centroid Akhir untuk k={k}:")
+for i, centroid in enumerate(centroids):
+    print(f"Centroid {i}: {centroid}")
+
+# =====================================================
+# 5. VISUALISASI 2D DENGAN PCA MANUAL DAN CENTROID
+# =====================================================
+cov_matrix = np.cov(X.T)
+eig_vals, eig_vecs = np.linalg.eigh(cov_matrix)
+idx = np.argsort(eig_vals)[::-1]
+principal_components = eig_vecs[:, idx[:2]]
+X_pca = X @ principal_components
+centroids_pca = centroids @ principal_components
+
+plt.figure(figsize=(8, 6))
+for i in range(k):
+    plt.scatter(X_pca[labels == i, 0], X_pca[labels == i, 1], label=f'Cluster {i}', alpha=0.7)
+    plt.scatter(centroids_pca[i, 0], centroids_pca[i, 1], marker='x', s=200, linewidths=3,
+                color='black', label=f'Centroid {i}' if i == 0 else None)
+plt.title(f'Visualisasi Cluster dan Centroid (Tahun 2012, 10 Atribut, k={k})')
+plt.xlabel('PC 1')
+plt.ylabel('PC 2')
+plt.legend()
+plt.grid(True)
+plt.show()
